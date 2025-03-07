@@ -13,216 +13,197 @@ from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.neighbors import KNeighborsRegressor
 
-# ==========================
-# 1. Заголовок приложения
-# ==========================
-st.title("📈 Прогнозирование уровня самоубийств")
-st.write(
-    """
-    Данный демо-проект демонстрирует процесс предобработки данных, 
-    обучения нескольких регрессионных моделей и визуализации результатов для задачи 
-    "Прогнозирование уровня самоубийств (на 100k) на основе исторических и социально-экономических показателей".
-    """
-)
+# ==============================
+# 1) Заголовок и краткое описание приложения
+# ==============================
+st.title("Прогнозирование уровня самоубийств на основании исторических данных")
+st.write("""
+Данный демо-проект повторяет логику ноутбука *Project 07.03.25.ipynb*,
+демонстрирует загрузку и подготовку данных, обзор EDA и обучение
+нескольких регрессионных моделей:
+- Linear Regression
+- Decision Tree Regressor
+- Random Forest Regressor
+- KNN Regressor
+""")
 
-# ==========================
-# 2. Боковая панель (параметры)
-# ==========================
-st.sidebar.header("Настройки и параметры")
+# ==============================
+# 2) Боковая панель с настройками
+# ==============================
+st.sidebar.header("Параметры приложения")
 
-test_size = st.sidebar.slider("Доля тестовой выборки (test_size)", 0.1, 0.5, 0.2, 0.05)
-max_depth = st.sidebar.slider("Максимальная глубина дерева (Decision Tree)", 1, 20, 5, 1)
-n_estimators = st.sidebar.slider("Количество деревьев (Random Forest)", 10, 300, 100, 10)
-k_neighbors = st.sidebar.slider("Количество соседей (KNN)", 1, 15, 5, 1)
+test_size = st.sidebar.slider("Test size (доля тестовой выборки)", 0.1, 0.5, 0.2, 0.05)
+max_depth_tree = st.sidebar.slider("Max depth (Decision Tree)", 1, 20, 5, 1)
+n_estimators_rf = st.sidebar.slider("Число деревьев (Random Forest)", 10, 300, 100, 10)
+k_neighbors = st.sidebar.slider("Число соседей (KNN)", 1, 15, 5, 1)
 
-# ==========================
-# 3. Функция загрузки и предобработки
-# ==========================
+# ==============================
+# 3) Функция загрузки + препроцессинга данных
+# ==============================
 @st.cache_data
 def load_and_preprocess_data(csv_file: str):
-    # Читаем CSV
+    # 1. Загрузка
     data = pd.read_csv(csv_file)
-    # Удаляем лишние столбцы, чистим NaN и т.д. – согласно вашему пайплайну
-    # Например:
-    data.drop(columns=['country-year', 'HDI for year'], inplace=True, errors='ignore')
-
-    # Переименуем некоторые колонки, если нужно
-    data.rename(columns={
-        'suicides/100k pop': 'suicides_100k_pop',
+    
+    # 2. Удаляем нерелевантные столбцы (пример, как в ноутбуке)
+    drop_cols = ['country-year', 'HDI for year', 'suicides_no']
+    for c in drop_cols:
+        if c in data.columns:
+            data.drop(columns=[c], inplace=True)
+    
+    # 3. Переименуем, если нужно
+    rename_dict = {
         'gdp_for_year ($)': 'gdp_for_year',
-        'gdp_per_capita ($)': 'gdp_per_capita'
-    }, inplace=True, errors='ignore')
-
-    # Преобразуем 'gdp_for_year' (если есть запятые)
-    if 'gdp_for_year' in data.columns and data['gdp_for_year'].dtype == 'object':
-        data['gdp_for_year'] = data['gdp_for_year'].str.replace(",", "", regex=False).astype(float, errors='ignore')
-
-    # Преобразуем категориальные столбцы (sex, age, generation) в числа
-    age_map = {
-        '5-14 years': 0, '15-24 years': 1, '25-34 years': 2,
-        '35-54 years': 3, '55-74 years': 4, '75+ years': 5
+        'gdp_per_capita ($)': 'gdp_per_capita',
+        'suicides/100k pop': 'suicides_100k_pop'
     }
+    for old_name, new_name in rename_dict.items():
+        if old_name in data.columns:
+            data.rename(columns={old_name: new_name}, inplace=True)
+    
+    # 4. Преобразуем столбец gdp_for_year (если он строковый с запятыми)
+    if 'gdp_for_year' in data.columns and data['gdp_for_year'].dtype == object:
+        data['gdp_for_year'] = data['gdp_for_year'].str.replace(",", "", regex=False).astype(float, errors='ignore')
+    
+    # 5. Маппим age (если нужно)
+    age_map = {'5-14 years':0, '15-24 years':1, '25-34 years':2, '35-54 years':3, '55-74 years':4, '75+ years':5}
     if 'age' in data.columns:
-        data['age'] = data['age'].map(age_map).fillna(-1)
-
-    sex_map = {'male': 0, 'female': 1}
+        data['age'] = data['age'].map(age_map)
+    
+    # 6. Маппим sex (если нужно)
+    sex_map = {'male':0, 'female':1}
     if 'sex' in data.columns:
-        data['sex'] = data['sex'].map(sex_map).fillna(-1)
-
+        data['sex'] = data['sex'].map(sex_map)
+    
+    # 7. Одна горячая кодировка для generation (пример, если было у вас)
     if 'generation' in data.columns:
         data = pd.get_dummies(data, columns=['generation'])
-
-    # Удалим дубликаты, если есть
+    
+    # Удаляем дубликаты
     data.drop_duplicates(inplace=True)
 
-    # Удалим пропуски в целевом столбце, если таковые вдруг есть
+    # Смотрим на пропуски в suicides_100k_pop, выкидываем, если есть
     data.dropna(subset=['suicides_100k_pop'], inplace=True)
 
-    # Масштабируем числовые признаки (по желанию).
-    # Выберем некоторые столбцы для скейлинга:
-    # (Проверяем, что они действительно есть в данных)
+    # Масштабируем numeric
     numeric_cols = ['population', 'gdp_for_year', 'gdp_per_capita']
-    for col in numeric_cols:
-        if col not in data.columns:
-            numeric_cols.remove(col)
-
-    from sklearn.preprocessing import StandardScaler
+    numeric_cols = [col for col in numeric_cols if col in data.columns]
+    
     scaler = StandardScaler()
     data[numeric_cols] = scaler.fit_transform(data[numeric_cols])
-
+    
     return data
 
-# Загрузка данных (предполагаем, что master.csv лежит в папке с приложением).
-# При желании можно заменить на st.file_uploader(...)
-csv_file = "master.csv"
+# ==============================
+# 4) Загружаем датасет (пример: master.csv)
+# ==============================
+csv_file = "master.csv"  # подставьте свой путь, если нужно
 data = load_and_preprocess_data(csv_file)
 
-# ==========================
-# 4. Отображение данных
-# ==========================
-st.subheader("Обзор подготовленных данных")
-st.write(f"Размер набора данных: {data.shape}")
-st.dataframe(data.head(10))
+st.write("### Пример данных")
+st.write(data.head(10))
 
-# ==========================
-# 5. Определяем фичи и таргет
-# ==========================
-# Предположим, что suicides_100k_pop – это таргет
+st.write("**Размер датасета**:", data.shape)
+
+# ==============================
+# 5) EDA-краткий обзор (пара метрик, пара графиков)
+# ==============================
+st.write("### Краткий EDA")
+
+# a) describe
+st.write("Статистика по числовым признакам:")
+st.dataframe(data.describe())
+
+# b) график: распределение suicides_100k_pop
+fig1, ax1 = plt.subplots(figsize=(6,4))
+sns.histplot(data['suicides_100k_pop'], bins=30, kde=True, ax=ax1, color='orange')
+ax1.set_title("Распределение suicides_100k_pop")
+st.pyplot(fig1)
+
+# c) корреляция
+if st.checkbox("Показать корреляционную матрицу?"):
+    fig2, ax2 = plt.subplots(figsize=(8,5))
+    sns.heatmap(data.corr(), cmap='viridis', annot=True, fmt=".2f", ax=ax2)
+    ax2.set_title("Correlation Matrix")
+    st.pyplot(fig2)
+
+# ==============================
+# 6) Формирование X, y и train_test_split
+# ==============================
+st.write("### Подготовка данных для модели")
+
 target_col = 'suicides_100k_pop'
-feature_cols = [c for c in data.columns if c not in ['suicides_100k_pop','suicides_no','country']]
+ignore_cols = ['country']  # или любые другие тексты, если остались
+feature_cols = [c for c in data.columns if c != target_col and c not in ignore_cols]
 
 X = data[feature_cols]
 y = data[target_col]
 
-# ==========================
-# 6. Разделяем на train/test
-# ==========================
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y,
-    test_size=test_size,
-    random_state=42
+    X, y, test_size=test_size, random_state=42
 )
+st.write(f"Train size: {X_train.shape}, Test size: {X_test.shape}")
 
-# ==========================
-# 7. Обучение моделей
-# ==========================
-st.subheader("Обучение и оценка качества моделей")
+# ==============================
+# 7) Обучение нескольких регрессоров
+# ==============================
+st.write("## Обучение моделей")
 
-models = {
+models_dict = {
     "Linear Regression": LinearRegression(),
-    "Decision Tree": DecisionTreeRegressor(max_depth=max_depth, random_state=42),
-    "Random Forest": RandomForestRegressor(n_estimators=n_estimators, max_depth=None, random_state=42),
+    "Decision Tree": DecisionTreeRegressor(max_depth=max_depth_tree, random_state=42),
+    "Random Forest": RandomForestRegressor(n_estimators=n_estimators_rf, random_state=42),
     "KNN Regressor": KNeighborsRegressor(n_neighbors=k_neighbors)
 }
 
 results = []
-
-for model_name, model in models.items():
+for name, model in models_dict.items():
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
-
     mae = mean_absolute_error(y_test, y_pred)
     mse = mean_squared_error(y_test, y_pred)
-    rmse = mse**0.5
+    rmse = np.sqrt(mse)
     r2 = r2_score(y_test, y_pred)
-
     results.append({
-        'Model': model_name,
+        'Model': name,
         'MAE': mae,
         'RMSE': rmse,
         'R^2': r2
     })
 
-# Выводим табличку с результатами
-results_df = pd.DataFrame(results).sort_values(by='RMSE', ascending=True)
-st.write(results_df)
+res_df = pd.DataFrame(results).sort_values("RMSE")
+st.dataframe(res_df)
 
-# ==========================
-# 8. Визуализации
-# ==========================
+# ==============================
+# 8) Детальный обзор для выбранной модели
+# ==============================
+st.write("### Детальный просмотр результатов одной из моделей")
 
-st.subheader("Сравнение фактических и предсказанных значений (примеры)")
-
-selected_model = st.selectbox(
-    "Выберите модель для просмотра детальной визуализации:",
-    list(models.keys())
+selected_model_name = st.selectbox(
+    "Выберите модель для детального просмотра",
+    list(models_dict.keys())
 )
+selected_model = models_dict[selected_model_name]
+y_pred_sel = selected_model.predict(X_test)
 
-model_obj = models[selected_model]
-y_pred_sel = model_obj.predict(X_test)
+# строим scatter "y_test vs y_pred"
+fig3, ax3 = plt.subplots(figsize=(6,6))
+ax3.scatter(y_test, y_pred_sel, alpha=0.5)
+ax3.set_xlabel("Истинные значения suicides_100k_pop")
+ax3.set_ylabel("Предсказанные значения")
+ax3.set_title(f"{selected_model_name}: Real vs Predicted")
 
-# График: scatter "y_test vs y_pred"
-fig1, ax1 = plt.subplots(figsize=(6, 6))
-ax1.scatter(y_test, y_pred_sel, alpha=0.6)
-ax1.set_xlabel("Фактический suicides_100k_pop")
-ax1.set_ylabel("Предсказанный suicides_100k_pop")
-ax1.set_title(f"{selected_model}: Реальные vs Предсказанные")
-# Линия y=x для наглядности
+# Линия y=x
 min_val = min(y_test.min(), y_pred_sel.min())
 max_val = max(y_test.max(), y_pred_sel.max())
-ax1.plot([min_val, max_val], [min_val, max_val], 'r--')
-st.pyplot(fig1)
+ax3.plot([min_val, max_val], [min_val, max_val], 'r--')
 
-st.write("**Примеры (первые 10 точек из теста):**")
+st.pyplot(fig3)
+
+# Показать несколько примеров
+st.write("Примеры (первые 10 из тестовой выборки):")
 comparison_df = pd.DataFrame({
-    'Actual': y_test.values[:10],
+    'Real': y_test.iloc[:10].values,
     'Predicted': y_pred_sel[:10]
 })
 st.dataframe(comparison_df)
-
-# ==========================
-# 9. (Опционально) Многомерная визуализация
-# ==========================
-# Если захотим 2D scatter по 2 признакам, а цвет = suicides_100k_pop
-st.subheader("2D Scatter по выбранным признакам (цвет = целевая переменная)")
-
-numeric_features = [c for c in feature_cols if pd.api.types.is_numeric_dtype(data[c])]
-default_2d = numeric_features[:2] if len(numeric_features) >= 2 else None
-
-two_feats = st.multiselect("Выберите 2 числовых признака", numeric_features, default=default_2d)
-if len(two_feats) == 2:
-    fig2, ax2 = plt.subplots(figsize=(7, 5))
-    scatter = ax2.scatter(
-        data[two_feats[0]],
-        data[two_feats[1]],
-        c=data[target_col],
-        cmap='viridis',
-        alpha=0.5
-    )
-    ax2.set_xlabel(two_feats[0])
-    ax2.set_ylabel(two_feats[1])
-    ax2.set_title("Распределение точек (цвет = suicides_100k_pop)")
-    plt.colorbar(scatter, label="Уровень самоубийств (на 100k)")
-    st.pyplot(fig2)
-else:
-    st.write("Выберите ровно 2 признака, чтобы увидеть 2D scatter.")
-
-# ==========================
-# 10. Завершающая часть
-# ==========================
-st.write("""
----
-**Вывод**: в результате мы видим, какая модель лучше предсказывает 
-числовой показатель (suicides_100k_pop) на тестовой выборке, 
-с учётом выбранных гиперпараметров и доли разделения.
-""")
