@@ -16,11 +16,13 @@ from sklearn.neighbors import KNeighborsRegressor
 # =========================================
 # 1) Заголовок приложения
 # =========================================
-st.title("Прогнозирование уровня самоубийств")
+st.title("Прогнозирование уровня самоубийств (лог-преобразованный таргет)")
 st.write("""
-Это Streamlit-приложение позволяет загрузить данные (по умолчанию из master.csv),
-выполнить базовый EDA и обучить несколько регрессионных моделей (LinearRegression,
-DecisionTree, RandomForest, KNN) для прогноза столбца suicides_100k_pop.
+Это Streamlit-приложение загружает данные (по умолчанию из master.csv), 
+выполняет базовый EDA и **обучает несколько регрессионных моделей** 
+на логарифмированном таргете (suicides_100k_pop). 
+Для итогового сравнения с реальными значениями 
+используется обратное преобразование expm1.
 """)
 
 # =========================================
@@ -50,16 +52,20 @@ k_neighbors = st.sidebar.slider(
 # =========================================
 @st.cache_data
 def load_and_preprocess_data(csv_file: str):
-    # 1. Загрузка данных
+    """
+    Функция читает CSV, удаляет ненужные колонки,
+    переименовывает, обрабатывает пропуски, 
+    масштабирует признаки и возвращает чистый DataFrame.
+    """
     data = pd.read_csv(csv_file)
 
-    # 2. Удаляем колонки, которые точно не нужны
+    # Удаляем колонки, которые точно не нужны
     drop_cols = ["country-year", "HDI for year", "suicides_no"]
     for col in drop_cols:
         if col in data.columns:
-            data.drop(columns=col, inplace=True)
+            data.drop(columns=col, inplace=True, errors='ignore')
 
-    # 3. Переименуем нужные колонки (если они есть)
+    # Переименуем, если есть
     rename_dict = {
         "gdp_for_year ($)": "gdp_for_year",
         "gdp_per_capita ($)": "gdp_per_capita",
@@ -69,7 +75,7 @@ def load_and_preprocess_data(csv_file: str):
         if old_name in data.columns:
             data.rename(columns={old_name: new_name}, inplace=True)
 
-    # 4. Преобразуем строки в float (например, gdp_for_year содержит запятые)
+    # Преобразуем gdp_for_year (если он строковый с запятыми)
     if "gdp_for_year" in data.columns and data["gdp_for_year"].dtype == object:
         data["gdp_for_year"] = (
             data["gdp_for_year"]
@@ -78,11 +84,11 @@ def load_and_preprocess_data(csv_file: str):
             .astype(float, errors="coerce")
         )
 
-    # 5. Преобразуем "year" в число, если есть
+    # Преобразуем year -> float/int
     if "year" in data.columns:
         data["year"] = pd.to_numeric(data["year"], errors="coerce")
 
-    # 6. Маппим возрастные интервалы и пол
+    # Маппим age, sex
     age_map = {
         "5-14 years": 0,
         "15-24 years": 1,
@@ -94,42 +100,34 @@ def load_and_preprocess_data(csv_file: str):
     if "age" in data.columns:
         data["age"] = data["age"].map(age_map)
 
-    sex_map = {"male":0, "female":1}
+    sex_map = {"male": 0, "female": 1}
     if "sex" in data.columns:
         data["sex"] = data["sex"].map(sex_map)
 
-    # 7. Преобразуем generation в дамми (если оно есть)
+    # Получаем дамми для generation (если есть)
     if "generation" in data.columns:
         data = pd.get_dummies(data, columns=["generation"])
 
     # Удаляем дубликаты
     data.drop_duplicates(inplace=True)
 
-    # Удаляем строки, где нет целевого столбца
+    # Удаляем строки без suicides_100k_pop
     if "suicides_100k_pop" in data.columns:
         data.dropna(subset=["suicides_100k_pop"], inplace=True)
 
-    # =========================================
-    # Фильтруем только числовые колонки
-    # =========================================
-    columns_to_ignore = ["country"]  # дополните, если есть др.
-    data = data.drop(columns=[c for c in columns_to_ignore if c in data.columns], errors="ignore")
+    # Удаляем (если ещё осталась) колонку country
+    if "country" in data.columns:
+        data.drop(columns=["country"], inplace=True, errors='ignore')
 
-    # =========================================
-    # Масштабируем numeric (population, gdp_for_year, gdp_per_capita и т.п.)
-    # =========================================
+    # Масштабируем числовые признаки (кроме целевого)
     numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
-
-    target_col = "suicides_100k_pop"
-    if target_col in numeric_cols:
-        numeric_cols.remove(target_col)
+    if "suicides_100k_pop" in numeric_cols:
+        numeric_cols.remove("suicides_100k_pop")
 
     scaler = StandardScaler()
     data[numeric_cols] = scaler.fit_transform(data[numeric_cols])
 
-    # =========================================
-    # Удаляем оставшиеся NaN / inf
-    # =========================================
+    # Удаляем inf/NaN
     data = data.replace([np.inf, -np.inf], np.nan)
     data.dropna(inplace=True)
 
@@ -154,82 +152,51 @@ st.write("## Краткий EDA")
 st.write("Статистика по числовым признакам:")
 st.dataframe(data.describe())
 
-# График распределения suicides_100k_pop
+# Гистограмма suicides_100k_pop
 if "suicides_100k_pop" in data.columns:
     fig1, ax1 = plt.subplots(figsize=(6,4))
     sns.histplot(data["suicides_100k_pop"], bins=30, kde=True, ax=ax1, color="orange")
-    ax1.set_title("Распределение suicides_100k_pop")
+    ax1.set_title("Распределение suicides_100k_pop (Обычная шкала)")
     st.pyplot(fig1)
 else:
-    st.warning("Колонки 'suicides_100k_pop' нет в данных!")
+    st.warning("Нет колонки 'suicides_100k_pop' в данных.")
 
 # Корреляционная матрица
 df_numeric = data.select_dtypes(include=[np.number])
-corr_matrix = df_numeric.corr()
-
 fig2, ax2 = plt.subplots(figsize=(8,5))
-sns.heatmap(corr_matrix, cmap='viridis', annot=True, fmt=".2f", ax=ax2)
+sns.heatmap(df_numeric.corr(), cmap='viridis', annot=True, fmt=".2f", ax=ax2)
 ax2.set_title("Correlation Matrix")
 st.pyplot(fig2)
 
 # =========================================
-# 5a) Пример лог-преобразования (data_log)
+# 6) Формируем X, y с ЛОГ-преобразованным target
 # =========================================
-# Вы сами указываете, какие столбцы логарифмировать
-cols_to_check = ["gdp_for_year", "gdp_per_capita", "population", "suicides_100k_pop"]
-data_log = data.copy()
+st.write("## Подготовка данных (лог-преобразованный target)")
 
-for col in cols_to_check:
-    if col in data_log.columns:
-        data_log[col + "_log"] = np.log1p(data_log[col])  # log1p == log(col+1)
-
-st.write("### Лог-трансформированные столбцы (data_log)")
-st.write(data_log.head(10))
-
-st.write("""
-Можно использовать **data_log** для отдельных исследований
-(например, посмотреть, как выглядит распределение логарифмированного 'suicides_100k_pop')
-или обучать модели на '..._log' версиях.
-""")
-
-# Пример: гистограмма логарифма suicides_100k_pop
-if "suicides_100k_pop_log" in data_log.columns:
-    fig_log, ax_log = plt.subplots(figsize=(6,4))
-    sns.histplot(data_log["suicides_100k_pop_log"], bins=30, kde=True, ax=ax_log, color="green")
-    ax_log.set_title("Распределение log1p(suicides_100k_pop)")
-    st.pyplot(fig_log)
-
-# =========================================
-# 6) Формируем X, y (из исходных data)
-# =========================================
-st.write("## Подготовка данных для модели (обычные значения)")
-
-target_col = "suicides_100k_pop"
-if target_col not in data.columns:
-    st.error("В датасете нет столбца suicides_100k_pop. Приложение остановлено.")
+if "suicides_100k_pop" not in data.columns:
+    st.error("В датасете нет 'suicides_100k_pop'. Приложение остановлено.")
     st.stop()
 
-features = [c for c in data.columns if c != target_col]
+# Выделяем признаки (X) и целевую (y)
+X = data.drop(columns=["suicides_100k_pop"], errors='ignore')
+y = data["suicides_100k_pop"]
 
-X = data[features].select_dtypes(include=[np.number])
-y = data[target_col]
+# Логарифмируем целевую переменную
+# log1p(y) = ln(y+1)
+# Модель будет обучаться на y_log
+y_log = np.log1p(y)
 
-valid_idx = X.dropna().index
-X = X.loc[valid_idx]
-y = y.loc[valid_idx]
-
-# =========================================
-# 7) train_test_split
-# =========================================
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=test_size, random_state=42
+# Сплитим
+X_train, X_test, y_train_log, y_test_log = train_test_split(
+    X, y_log, test_size=test_size, random_state=42
 )
+
 st.write(f"Train size: {X_train.shape}, Test size: {X_test.shape}")
 
 # =========================================
-# 8) Обучение нескольких регрессоров
+# 7) Обучение нескольких регрессоров (log target)
 # =========================================
-st.write("## Обучение моделей (без лог-преобразований)")
+st.write("## Обучение моделей (LOG-трансформированный target)")
 
 models_dict = {
     "Linear Regression": LinearRegression(),
@@ -240,8 +207,17 @@ models_dict = {
 
 results = []
 for name, model in models_dict.items():
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
+    # Обучаем на лог-таргете
+    model.fit(X_train, y_train_log)
+
+    # Предсказание в лог-пространстве
+    y_pred_log = model.predict(X_test)
+
+    # Обратное преобразование к обычной шкале
+    y_pred = np.expm1(y_pred_log)  # expm1(x)=e^x -1
+
+    # Сравниваем с реальными y (которые тоже в обычной шкале)
+    y_test = np.expm1(y_test_log)  # Чтобы метрики считались корректно
 
     mae = mean_absolute_error(y_test, y_pred)
     mse = mean_squared_error(y_test, y_pred)
@@ -259,32 +235,39 @@ res_df = pd.DataFrame(results).sort_values("RMSE")
 st.dataframe(res_df)
 
 # =========================================
-# 9) Детальный просмотр для одной из моделей
+# 8) Детальный просмотр для одной из моделей
 # =========================================
-st.write("## Детальный просмотр результатов одной из моделей")
+st.write("## Детальный просмотр результатов (лог-трансформированный target)")
 
 model_name = st.selectbox(
     "Выберите модель",
     list(models_dict.keys())
 )
 selected_model = models_dict[model_name]
-y_pred_sel = selected_model.predict(X_test)
+
+# Предсказания
+y_pred_log = selected_model.predict(X_test)
+y_pred = np.expm1(y_pred_log)
+
+# Фактические значения (тоже 'разлогарифмируем')
+y_test_real = np.expm1(y_test_log)
 
 fig3, ax3 = plt.subplots(figsize=(6,6))
-ax3.scatter(y_test, y_pred_sel, alpha=0.5)
-ax3.set_xlabel("Истинные values (suicides_100k_pop)")
-ax3.set_ylabel("Предсказанные values")
-ax3.set_title(f"{model_name}: Real vs Predicted")
+ax3.scatter(y_test_real, y_pred, alpha=0.5)
+ax3.set_xlabel("Истинные (suicides_100k_pop)")
+ax3.set_ylabel("Предсказанные (expm1)")
+ax3.set_title(f"{model_name}: Real vs Predicted (LOG target)")
 
-min_val = min(y_test.min(), y_pred_sel.min())
-max_val = max(y_test.max(), y_pred_sel.max())
+min_val = min(y_test_real.min(), y_pred.min())
+max_val = max(y_test_real.max(), y_pred.max())
 ax3.plot([min_val, max_val], [min_val, max_val], 'r--')
 
 st.pyplot(fig3)
 
+# Показываем примеры
 compare_df = pd.DataFrame({
-    "Real": y_test.iloc[:10].values,
-    "Predicted": y_pred_sel[:10]
+    "Real": y_test_real.iloc[:10].values,
+    "Predicted": y_pred[:10]
 })
 st.write("Примеры (первые 10):")
 st.dataframe(compare_df)
