@@ -112,27 +112,23 @@ def load_and_preprocess_data(csv_file: str):
     # =========================================
     # Фильтруем только числовые колонки
     # =========================================
-    # Допустим, мы не хотим country, etc.
-    columns_to_ignore = ["country", "country-year"]  # дополните, если есть др.
+    columns_to_ignore = ["country"]  # дополните, если есть др.
     data = data.drop(columns=[c for c in columns_to_ignore if c in data.columns], errors="ignore")
 
     # =========================================
     # Масштабируем numeric (population, gdp_for_year, gdp_per_capita и т.п.)
     # =========================================
-    # Найдём все числовые колонки
     numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
 
-    # Но целевую колонку масштабировать не нужно
     target_col = "suicides_100k_pop"
     if target_col in numeric_cols:
         numeric_cols.remove(target_col)
 
-    # Выполним стандартизацию
     scaler = StandardScaler()
     data[numeric_cols] = scaler.fit_transform(data[numeric_cols])
 
     # =========================================
-    # Удаляем оставшиеся NaN / inf (если появились после преобразований)
+    # Удаляем оставшиеся NaN / inf
     # =========================================
     data = data.replace([np.inf, -np.inf], np.nan)
     data.dropna(inplace=True)
@@ -177,23 +173,47 @@ ax2.set_title("Correlation Matrix")
 st.pyplot(fig2)
 
 # =========================================
-# 6) Формируем X, y
+# 5a) Пример лог-преобразования (data_log)
 # =========================================
-st.write("## Подготовка данных для модели")
+# Вы сами указываете, какие столбцы логарифмировать
+cols_to_check = ["gdp_for_year", "gdp_per_capita", "population", "suicides_100k_pop"]
+data_log = data.copy()
+
+for col in cols_to_check:
+    if col in data_log.columns:
+        data_log[col + "_log"] = np.log1p(data_log[col])  # log1p == log(col+1)
+
+st.write("### Лог-трансформированные столбцы (data_log)")
+st.write(data_log.head(10))
+
+st.write("""
+Можно использовать **data_log** для отдельных исследований
+(например, посмотреть, как выглядит распределение логарифмированного 'suicides_100k_pop')
+или обучать модели на '..._log' версиях.
+""")
+
+# Пример: гистограмма логарифма suicides_100k_pop
+if "suicides_100k_pop_log" in data_log.columns:
+    fig_log, ax_log = plt.subplots(figsize=(6,4))
+    sns.histplot(data_log["suicides_100k_pop_log"], bins=30, kde=True, ax=ax_log, color="green")
+    ax_log.set_title("Распределение log1p(suicides_100k_pop)")
+    st.pyplot(fig_log)
+
+# =========================================
+# 6) Формируем X, y (из исходных data)
+# =========================================
+st.write("## Подготовка данных для модели (обычные значения)")
 
 target_col = "suicides_100k_pop"
 if target_col not in data.columns:
     st.error("В датасете нет столбца suicides_100k_pop. Приложение остановлено.")
     st.stop()
 
-# Выбрасываем также любую текстовую колонку (country и т.п.) если ещё осталось
-ignore_cols = ["country"]  # можно дополнить
-features = [c for c in data.columns if c != target_col and c not in ignore_cols]
+features = [c for c in data.columns if c != target_col]
 
-X = data[features].select_dtypes(include=[np.number])  # берём только числа
+X = data[features].select_dtypes(include=[np.number])
 y = data[target_col]
 
-# На всякий случай заново проверим на NaN
 valid_idx = X.dropna().index
 X = X.loc[valid_idx]
 y = y.loc[valid_idx]
@@ -209,7 +229,7 @@ st.write(f"Train size: {X_train.shape}, Test size: {X_test.shape}")
 # =========================================
 # 8) Обучение нескольких регрессоров
 # =========================================
-st.write("## Обучение моделей")
+st.write("## Обучение моделей (без лог-преобразований)")
 
 models_dict = {
     "Linear Regression": LinearRegression(),
@@ -250,7 +270,6 @@ model_name = st.selectbox(
 selected_model = models_dict[model_name]
 y_pred_sel = selected_model.predict(X_test)
 
-# Scatter: y_test vs y_pred
 fig3, ax3 = plt.subplots(figsize=(6,6))
 ax3.scatter(y_test, y_pred_sel, alpha=0.5)
 ax3.set_xlabel("Истинные values (suicides_100k_pop)")
@@ -263,7 +282,6 @@ ax3.plot([min_val, max_val], [min_val, max_val], 'r--')
 
 st.pyplot(fig3)
 
-# Показываем первые 10 примеров
 compare_df = pd.DataFrame({
     "Real": y_test.iloc[:10].values,
     "Predicted": y_pred_sel[:10]
