@@ -135,7 +135,7 @@ st.pyplot(fig2)
 st.write("### Подготовка данных для модели")
 
 target_col = 'suicides_100k_pop'
-ignore_cols = ['country', 'suicides_100k_pop', 'suicides_no']  # или любые другие тексты, если остались
+ignore_cols = ['country', 'suicides_100k_pop', 'suicides_no', 'year']  # или любые другие тексты, если остались
 feature_cols = [c for c in data.columns if c != target_col and c not in ignore_cols]
 
 X = data[feature_cols]
