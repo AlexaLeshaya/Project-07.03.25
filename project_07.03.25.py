@@ -63,7 +63,7 @@ def load_and_preprocess_data(csv_file: str):
     
     # 4. Преобразуем столбец gdp_for_year (если он строковый с запятыми)
     if 'gdp_for_year' in data.columns and data['gdp_for_year'].dtype == object:
-        data['gdp_for_year'] = data['gdp_for_year'].str.replace(",", "", regex=False).astype(float, errors='ignore')
+        data["gdp_for_year"] = data["gdp_for_year"].str.replace(",", "", regex=False).astype(float)
     
     # 5. Маппим age (если нужно)
     age_map = {'5-14 years':0, '15-24 years':1, '25-34 years':2, '35-54 years':3, '55-74 years':4, '75+ years':5}
