@@ -121,11 +121,13 @@ ax1.set_title("Распределение suicides_100k_pop")
 st.pyplot(fig1)
 
 # c) корреляция
-if st.checkbox("Показать корреляционную матрицу?"):
-    fig2, ax2 = plt.subplots(figsize=(8,5))
-    sns.heatmap(data.corr(), cmap='viridis', annot=True, fmt=".2f", ax=ax2)
-    ax2.set_title("Correlation Matrix")
-    st.pyplot(fig2)
+df_numeric = data.select_dtypes(include=[np.number])
+corr_matrix = df_numeric.corr()
+
+fig2, ax2 = plt.subplots(figsize=(8,5))
+sns.heatmap(corr_matrix, cmap='viridis', annot=True, fmt=".2f", ax=ax2)
+ax2.set_title("Correlation Matrix")
+st.pyplot(fig2)
 
 # ==============================
 # 6) Формирование X, y и train_test_split
